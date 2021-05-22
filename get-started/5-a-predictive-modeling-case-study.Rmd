@@ -1,0 +1,232 @@
+---
+title: "5. A Predictive modeling case study"
+author: "Yao Yu"
+date: "5/21/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+
+# Get Started with tidymodels guide:
+# https://www.tidymodels.org/start/models/
+
+# Main packages
+# Needed for parsnip package and tidymodels
+library(tidymodels)
+library(tidyverse)
+
+# Helper packages
+# Needed for varaible importance plots
+library(vip)
+```
+
+```{r data}
+# Downloading the data
+# download.file("https://tidymodels.org/start/case-study/hotels.csv", destfile = "hotels.csv")
+
+# Reading in the data
+hotels <- read_csv("hotels.csv", col_types = cols(
+  .default = col_character(),
+  lead_time = col_double(),
+  stays_in_weekend_nights = col_double(),
+  stays_in_week_nights = col_double(),
+  adults = col_double(),
+  is_repeated_guest = col_double(),
+  previous_cancellations = col_double(),
+  previous_bookings_not_canceled = col_double(),
+  booking_changes = col_double(),
+  days_in_waiting_list = col_double(),
+  average_daily_rate = col_double(),
+  total_of_special_requests = col_double(),
+  arrival_date = col_date(format = "")
+)) %>% 
+  mutate_if(is.character, as.factor)
+
+# Looking at the prop of stays with children
+hotels %>% 
+  count(children) %>% 
+  mutate(prop = n/sum(n))
+
+# Splitting the data
+set.seed(121)
+splits <- initial_split(hotels, strata = children)
+hotel_other <- training(splits)
+hotel_test <- testing(splits)
+
+# Creating a validation split
+set.seed(121)
+val_set <- validation_split(hotel_other, strata = children, prop = 0.8)
+```
+
+```{r penalized lr model}
+# Penalized model similar to lasso method
+# Building the model
+lr_mod <- logistic_reg(penalty = tune(), mixture = 1) %>% 
+  set_engine("glmnet")
+```
+
+```{r penalized lr recipes}
+# Setting an array of holidays
+holidays <- c("AllSouls", "AshWednesday", "ChristmasEve", "Easter", "ChristmasDay", "GoodFriday", "NewYearsDay", "PalmSunday")
+
+# Creating a recipe
+lr_recipe <- recipe(children ~ ., data = hotel_other) %>% 
+  step_date(arrival_date) %>% 
+  step_holiday(arrival_date, holidays = holidays) %>% 
+  step_rm(arrival_date) %>% 
+  step_dummy(all_nominal(), -all_outcomes()) %>% 
+  step_zv(all_predictors()) %>% 
+  step_normalize(all_predictors())
+```
+
+```{r penalized lr workflow}
+# Creating a workflow
+lr_workflow <- workflow() %>% 
+  add_model(lr_mod) %>% 
+  add_recipe(lr_recipe)
+```
+
+```{r penalized lr tuning}
+# Creating 30 values for the penalty hyperparameter
+lr_reg_grid <- tibble(penalty = 10^seq(-4, -1, length.out = 30))
+
+# Tuning the workflow
+lr_res <- lr_workflow %>% 
+  tune_grid(val_set,
+            grid = lr_reg_grid,
+            control = control_grid(save_pred = TRUE),
+            metrics = metric_set(roc_auc))
+
+# Plotting AUC vs penalty
+lr_res %>% 
+  collect_metrics() %>% 
+  ggplot(aes(x = penalty, y = mean)) +
+  geom_point() +
+  geom_line() +
+  labs(y = "Area under the ROC Curve") +
+  scale_x_log10(labels = scales::label_number()) +
+  theme_linedraw()
+
+# Looking at the top models
+top_models <- lr_res %>% 
+  show_best("roc_auc", n = 15) %>% 
+  arrange(penalty)
+
+top_models
+
+# Selecting the best model
+lr_best <- lr_res %>% 
+  collect_metrics() %>% 
+  arrange(penalty) %>% 
+  slice(12)
+
+lr_best
+
+# Plotting the ROC Curve
+lr_auc <- lr_res %>% 
+  collect_predictions(parameters = lr_best) %>% 
+  roc_curve(children, .pred_children) %>% 
+  mutate(model = "Logistic Regression")
+
+autoplot(lr_auc)
+```
+
+```{r rf model}
+# Detecting the number of cores of my laptop
+cores <- parallel::detectCores()
+cores
+
+# Building the rf model
+rf_mod <- rand_forest(mtry = tune(), min_n = tune(), trees = 1000) %>% 
+  set_engine("ranger", num.threads = cores) %>% 
+  set_mode("classification")
+```
+
+```{r rf recipe}
+# Creating a recipe
+rf_recipe <- recipe(children ~ ., data = hotel_other) %>% 
+  step_date(arrival_date) %>% 
+  step_holiday(arrival_date) %>% 
+  step_rm(arrival_date)
+```
+
+```{r rf workflow}
+# Creating a workflow
+rf_workflow <- workflow() %>% 
+  add_model(rf_mod) %>% 
+  add_recipe(rf_recipe)
+```
+
+```{r rf tuning}
+# Tuning the model
+set.seed(121)
+rf_res <- rf_workflow %>% 
+  tune_grid(val_set,
+            grid = 25,
+            control = control_grid(save_pred = TRUE),
+            metrics = metric_set(roc_auc))
+
+# Showing the top models
+rf_res %>% 
+  show_best(metric = "roc_auc")
+
+# Plotting the metrics
+autoplot(rf_res)
+
+# Selecting the best metric
+rf_best <- rf_res %>% 
+  select_best(metric = "roc_auc")
+
+# Filtering for only the best prediction
+rf_auc <- rf_res %>% 
+  collect_predictions(parameters = rf_best) %>% 
+  roc_curve(children, .pred_children) %>% 
+  mutate(model = "Random Forest")
+```
+
+```{r ROC Plot}
+# Plotting the two ROC Curves from the best models from lr and rf
+bind_rows(rf_auc, lr_auc) %>% 
+  ggplot(aes(x = 1 - specificity, y = sensitivity, color = model)) +
+  geom_path(lwd = 1.5, alpha = 0.8) +
+  geom_abline(lty = 3) +
+  coord_equal() +
+  scale_color_viridis_d(option = "plasma", end = 0.6) +
+  theme_linedraw() +
+  theme(legend.position = "top")
+```
+
+```{r final model}
+# Building the model
+last_rf_mod <- rand_forest(mtry = 8, min_n = 7, trees = 1000) %>% 
+  set_engine("ranger", num.threads = cores, importance = "impurity") %>% 
+  set_mode("classification")
+
+# Workflow
+last_rf_workflow <- rf_workflow %>% 
+  update_model(last_rf_mod)
+
+# Fit
+set.seed(121) 
+last_rf_fit <- last_rf_workflow %>% 
+  last_fit(splits)
+
+# Metrics
+last_rf_fit %>% 
+  collect_metrics()
+
+# Most important variables
+last_rf_fit %>% 
+  pluck(".workflow", 1) %>% 
+  pull_workflow_fit() %>% 
+  vip(num_features = 20)
+
+# ROC Curves
+last_rf_fit %>% 
+  collect_predictions() %>% 
+  roc_curve(children, .pred_children) %>% 
+  autoplot()
+```
+
+

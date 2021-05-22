@@ -1,0 +1,90 @@
+---
+title: "3. Evaluate your model with resampling"
+author: "Yao Yu"
+date: "5/21/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+
+# Get Started with tidymodels guide:
+# https://www.tidymodels.org/start/models/
+
+# Main packages
+# Needed for parsnip package and tidymodels
+library(tidymodels)
+library(tidyverse)
+
+# Helper packages
+# Needed for cells data
+library(modeldata)
+```
+
+```{r data}
+# Loading in the data
+data(cells, package = "modeldata")
+
+# Seeing how many cells are well segmented vs. poorly segmented
+cells %>% 
+  count(class) %>% 
+  mutate(prop = n/sum(n))
+
+# Splitting the data, using strata to keep same prop of poorly vs well-segmented cells
+set.seed(121)
+cell_split <- initial_split(cells %>% select(-case), strata = class)
+
+cell_train <- training(cell_split)
+cell_test <- testing(cell_split)
+```
+
+```{r rf model}
+# Creating a random forest model
+rf_mod <- rand_forest(trees = 1000) %>% 
+  set_engine("ranger") %>% 
+  set_mode("classification")
+
+set.seed(121)
+
+# Fitting the model
+rf_fit <- rf_mod %>% 
+  fit(class ~ ., data = cell_train)
+
+rf_fit
+```
+
+```{r ROC curve}
+# Getting the predicted prob of class
+rf_testing_pred <- predict(rf_fit, cell_test) %>% 
+  bind_cols(predict(rf_fit, cell_test, type = "prob")) %>% 
+  bind_cols(cell_test %>% select(class))
+
+# Getting the ROC AUC
+rf_testing_pred %>% 
+  roc_auc(truth = class, .pred_PS)
+
+# Getting the accuracy
+rf_testing_pred %>% 
+  accuracy(truth = class, .pred_class)
+```
+
+```{r model with resampling}
+set.seed(121)
+
+# Setting 10 fold CV
+folds <- vfold_cv(cell_train, v = 10)
+
+# Using workflow to bundle the rf model with a formula
+rf_wf <- workflow() %>% 
+  add_model(rf_mod) %>% 
+  add_formula(class ~ .)
+
+set.seed(121)
+
+# Fitting the workflow with 10 fold resampling
+rf_fit_rs <- rf_wf %>% 
+  fit_resamples(folds)
+
+# Looking at the metrics of the 10 fold fit
+collect_metrics(rf_fit_rs)
+```

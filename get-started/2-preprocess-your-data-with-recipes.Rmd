@@ -1,0 +1,111 @@
+---
+title: "2. Preprocess your data with recipes"
+author: "Yao Yu"
+date: "5/21/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+
+# Get Started with tidymodels guide:
+# https://www.tidymodels.org/start/models/
+
+# Main packages
+# Needed for parsnip package and tidymodels
+library(tidymodels)
+library(tidyverse)
+
+# Helper packages
+# Needed for flight data
+library(nycflights13)
+```
+
+```{r data cleaning}
+# Setting the seed
+set.seed(121)
+
+# Cleaning the data
+flights_data <- flights %>% 
+  mutate(arr_delay = factor(ifelse(arr_delay >= 30, "late", "on_time")),
+         date = as.Date(time_hour)) %>% 
+  inner_join(weather, by = c("origin", "time_hour")) %>% 
+  select(dep_time, flight, origin, dest, air_time, distance, carrier, date, arr_delay, time_hour) %>% 
+  drop_na() %>% 
+  mutate_if(is.character, as.factor)
+
+# Checking the number of flights delayed
+flights_data %>% 
+  count(arr_delay) %>% 
+  mutate(prop = n/sum(n))
+
+# Checking which variables should be converted to dummy variables
+flights_data %>% 
+  skimr::skim(dest, carrier)
+
+# Splitting the data
+data_split <- initial_split(flights_data, prop = 3/4)
+train_data <- training(data_split)
+test_data <- testing(data_split)
+```
+
+```{r recipe and roles}
+# New recipe and role
+flights_rec <- recipe(arr_delay ~ ., data = train_data) %>% 
+  update_role(flight, time_hour, new_role = "ID") %>% 
+# Getting specifics from date
+  step_date(date, features = c("dow", "month")) %>% 
+  step_holiday(date, holidays = timeDate::listHolidays("US")) %>% 
+  step_rm(date) %>% 
+# Creating dummy variables for all numeric predictors
+  step_dummy(all_nominal(), -all_outcomes()) %>% 
+# Removing columns from the data when the training set has a single a single value
+  step_zv(all_predictors())
+
+summary(flights_rec)
+```
+
+```{r logistic model}
+# Logistic Model
+lr_mod <- logistic_reg() %>% 
+  set_engine("glm")
+
+# Using a model workflow to pair the model and recipe together
+flights_wflow <- workflow() %>% 
+  add_model(lr_mod) %>% 
+  add_recipe(flights_rec)
+
+flights_wflow
+
+# Fitting the model
+flights_fit <- flights_wflow %>% 
+  fit(data = train_data)
+
+# Pulling the workflow fit
+flights_fit %>% 
+  pull_workflow_fit() %>% 
+  tidy()
+```
+
+```{r logistic predict}
+# Predicting on the test data
+predict(flights_fit, test_data, type = "prob")
+
+# Getting the probabilities of prediction
+flights_pred <- predict(flights_fit, test_data, type = "prob") %>% 
+  bind_cols(test_data %>% select(arr_delay, time_hour, flight))
+
+flights_pred
+```
+
+```{r ROC curve}
+# Plotting the ROC curve
+flights_pred %>% 
+  roc_curve(truth = arr_delay, .pred_late) %>% 
+  autoplot()
+
+# Estimating the area under the curve
+flights_pred %>% 
+  roc_auc(truth = arr_delay, .pred_late)
+```
+

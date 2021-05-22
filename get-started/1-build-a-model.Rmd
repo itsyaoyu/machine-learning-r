@@ -1,0 +1,124 @@
+---
+title: "1. Build a Model"
+author: "Yao Yu"
+date: "5/21/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+
+# Get Started with tidymodels guide:
+# https://www.tidymodels.org/start/models/
+
+# Main packages
+# Needed for parsnip package and tidymodels
+library(tidymodels)
+library(tidyverse)
+
+# Helper packages
+# Needed for converting bayesian models to tidy tibbles
+library(broom.mixed)
+# Needed for visualizing regression results
+library(dotwhisker)
+```
+
+```{r data}
+# Downloading the data
+# download.file("https://tidymodels.org/start/models/urchins.csv", "urchines.csv")
+
+# Reading in the data
+urchins <- read_csv("urchines.csv",
+                    col_types = cols(
+                                      TREAT = col_factor(c("Initial", "Low", "High")),
+                                      IV = col_double(),
+                                      SUTW = col_double()
+                                    )) %>% 
+  rename(food_regime = TREAT,
+         initial_volume = IV,
+         width = SUTW)
+  
+```
+
+```{r eda}
+# Scatterplot with trends
+urchins %>% 
+  ggplot(aes(x = initial_volume, y = width, group = food_regime, color = food_regime)) +
+  geom_point() +
+  geom_smooth(method = "lm", formula = "y ~ x", se = FALSE) +
+  scale_color_viridis_d(option = "plasma", end = .7) +
+  theme_linedraw() +
+  theme(legend.position = "top")
+```
+
+```{r lm model}
+# Linear Regression Model
+lm_fit <- linear_reg() %>% 
+  set_engine("lm") %>% 
+  fit(width ~ initial_volume * food_regime, data = urchins)
+
+# Dot-and-whisker plot of regression results
+tidy(lm_fit) %>% 
+  dwplot(dot_args = list(size = 2, color = "black"),
+         whisker_args = list(color = "black"),
+         vline = geom_vline(xintercept = 0, color = "grey50", linetype = 2)) +
+  theme_linedraw()
+```
+
+```{r lm predict}
+# Creating fake data
+new_points <- tibble(initial_volume = 20,
+                     food_regime = c("Initial", "Low", "High"))
+
+# Predicting for mean and CI
+mean_pred <- predict(lm_fit, new_data = new_points)
+conf_int_pred <- predict(lm_fit, new_data = new_points, type = "conf_int")
+
+# Joining the data together
+plot_data <- new_points %>% 
+  bind_cols(mean_pred, conf_int_pred)
+
+plot_data %>% 
+  ggplot(aes(x = food_regime)) +
+  geom_point(aes(y = .pred)) +
+  geom_errorbar(aes(ymin = .pred_lower,
+                    ymax = .pred_upper), width = .2) +
+  labs(y = "urchin size") +
+  theme_linedraw()
+```
+
+```{r stan model}
+# Setting the prior distribution
+prior_dist <- rstanarm::student_t()
+
+# Setting the seed
+set.seed(121)
+
+# Stan Model
+bayes_mod <- linear_reg() %>% 
+  set_engine("stan", 
+             prior_intercept = prior_dist, 
+             prior = prior_dist)
+
+# Training the model
+bayes_fit <- bayes_mod %>% 
+  fit(width ~ initial_volume * food_regime, data = urchins)
+
+tidy(bayes_fit, conf.int = TRUE)
+
+bayes_plot_data <- new_points %>% 
+  bind_cols(predict(bayes_fit, new_data = new_points),
+            predict(bayes_fit, new_data = new_points, type = "conf_int")) 
+
+bayes_plot_data %>% 
+  ggplot(aes(x = food_regime)) +
+  geom_point(aes(y = .pred)) +
+  geom_errorbar(aes(ymin = .pred_lower,
+                    ymax = .pred_upper), width = 0.2) +
+  labs(title = "Bayesian Model with t(1) prior distribution",
+       y = "urchin size") +
+  theme_linedraw()
+```
+
+
+
