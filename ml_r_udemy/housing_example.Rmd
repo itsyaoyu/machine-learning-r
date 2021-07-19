@@ -1,0 +1,55 @@
+---
+title: "Housing Example"
+author: "Yao Yu"
+date: "7/18/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+library(mice)
+library(dummies)
+
+housing_data <- read_csv("Data Files/Linear Regression Dataset/House_Price.csv")
+```
+
+```{r cleaning outliers}
+# Capping and flooring outliers in n_hot_rooms and rainfall
+n_hot_rooms_upper <- 3 * quantile(housing_data$n_hot_rooms, .99)
+rainfall_lower <- 0.3 * quantile(housing_data$rainfall, .01)
+
+housing_data <- housing_data %>% 
+  mutate(n_hot_rooms = ifelse(n_hot_rooms > n_hot_rooms_upper, n_hot_rooms_upper, n_hot_rooms),
+         rainfall = ifelse(rainfall < rainfall_lower, rainfall_lower, rainfall))
+
+housing_data %>% 
+  ggplot(aes(x = n_hot_rooms)) +
+  geom_histogram()
+```
+
+```{r replace missing values with imputation}
+# Using mice package for imputation instead of just average
+housing_data <- complete(mice(housing_data, printFlag = FALSE))
+```
+
+```{r variable transformation}
+# Looking at crime rate and combining dist
+housing_data %>% 
+  ggplot(aes(x = log(crime_rate + 1), y = price)) +
+  geom_point()
+
+housing_data <- housing_data %>% 
+  mutate(crime_rate = log(crime_rate + 1),
+         avg_dist = mean(dist1 + dist2 + dist3 + dist4)) %>% 
+  select(-c(dist1, dist2, dist3, dist4))
+
+```
+
+```{r creating dummy variables}
+# Creating dummy variables using the dummies pacakge
+housing_data <- tibble(dummy.data.frame(housing_data)) %>% 
+  select(-c(airportNO, waterbodyNone))
+```
+

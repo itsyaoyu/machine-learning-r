@@ -1,0 +1,81 @@
+---
+title: "TMWR Ames Housing"
+author: "Yao Yu"
+date: "7/17/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+
+# Removing scientific notation
+options(scipen = 999)
+
+# Loading in libraries
+library(janitor)
+library(tidyverse)
+library(tidymodels)
+tidymodels_prefer()
+
+# Loading in the data
+data("ames")
+
+ames <- ames %>% 
+  clean_names()
+```
+
+```{r initial eda and cleaning}
+# Plotting the data
+ames %>% 
+  ggplot(aes(x = sale_price)) +
+  geom_histogram(bins = 50) +
+  scale_x_log10() +
+  theme_light()
+
+# Data cleaning, log transform sale price
+ames <- ames %>% 
+  mutate(sale_price = log10(sale_price))
+```
+
+```{r splitting the data}
+# Setting the seed for reproducibility
+set.seed(2001)
+
+# Splitting the data into training and testing
+ames_split <- initial_split(ames, prop = 0.8, strata = sale_price)
+
+# Pulling out the two groups
+ames_train <- training(ames_split)
+ames_test <- testing(ames_split)
+```
+
+```{r models}
+# Linear model
+lm_model <- linear_reg() %>% 
+  set_engine("lm")
+
+# Linear fit
+lm_form_fit <- lm_model %>% 
+  fit(sale_price ~ longitude + latitude, data = ames_train)
+
+# Looking at the output
+lm_form_fit %>% pluck("fit") %>% summary()
+
+tidy(lm_form_fit)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
