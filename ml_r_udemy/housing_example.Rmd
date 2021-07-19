@@ -11,6 +11,10 @@ knitr::opts_chunk$set(echo = TRUE)
 library(tidyverse)
 library(mice)
 library(dummies)
+library(tidymodels)
+library(readxl)
+library(janitor)
+library(ggcorrplot)
 
 housing_data <- read_csv("Data Files/Linear Regression Dataset/House_Price.csv")
 ```
@@ -51,5 +55,113 @@ housing_data <- housing_data %>%
 # Creating dummy variables using the dummies pacakge
 housing_data <- tibble(dummy.data.frame(housing_data)) %>% 
   select(-c(airportNO, waterbodyNone))
+```
+
+```{r simple linear regression}
+# Fitting a simpole lm
+fit_1 <- lm(price ~ room_num, data = housing_data)
+
+summary(fit_1)
+
+housing_data %>% 
+  ggplot(aes(x = room_num, y = price)) +
+  geom_point() +
+  geom_smooth(method = "lm", formula = "y ~ x", se = FALSE)
+
+```
+
+```{r multiple linear regerssion}
+# Fitting a multiple lm with all variables
+fit_2 <- lm(price ~ ., data = housing_data)
+
+summary(fit_2)
+
+```
+
+```{r train test split}
+# Creating a train test split using rsample
+housing_data_split <- initial_split(housing_data, .8)
+
+housing_train <- training(housing_data_split)
+housing_test <- testing(housing_data_split)
+
+# Model and evaluation
+fit_3 <- lm(price ~ ., data = housing_train)
+
+train_pred <- predict(fit_3, newdata = housing_train)
+test_pred <- predict(fit_3, newdata = housing_test)
+
+train_mse <- mean((housing_train$price - train_pred)^2)
+test_mse <- mean((housing_test$price - test_pred)^2)
+
+train_mse
+test_mse
+```
+
+```{r first test}
+# Reading in the car data
+car_data <- read_xlsx("Cardata.xlsx") %>% 
+  clean_names()
+
+# Making a correlation matrix plot
+ggcorrplot(cor(car_data), hc.order = TRUE, type = "lower",
+           outline.color = "white",
+           ggtheme = theme_light,
+           colors = c("#6D9EC1", "white", "#E46726"))
+
+# Split
+car_data_split <- initial_split(car_data, 0.8)
+car_train <- training(car_data_split)
+car_test <- testing(car_data_split)
+
+# Model
+fit_car <- lm(mpg ~ ., data = car_train)
+
+summary(fit_car)
+
+car_train_pred <- predict(fit_car, newdata = car_train)
+car_test_pred <- predict(fit_car, newdata = car_test)
+
+car_train_mse <- mean((car_train$mpg - car_train_pred)^2)
+car_test_mse <- mean((car_test$mpg - car_test_pred)^2)
+
+car_train_mse
+car_test_mse
+```
+
+```{r best subset selection}
+library(leaps)
+
+lm_best <- regsubsets(price ~ ., data = housing_data, nvmax = 15)
+which.max(summary(lm_best)$adjr2)
+coef(lm_best, 8)
+
+lm_forward <- regsubsets(price ~ ., data = housing_data, nvmax = 15, method = "forward")
+which.max(summary(lm_forward)$adjr2)
+coef(lm_forward, 9)
+
+lm_backward <- regsubsets(price ~ ., data = housing_data, nvmax = 15, method = "backward")
+which.max(summary(lm_backward)$adjr2)
+coef(lm_backward, 9)
+```
+
+```{r shrinkage methods}
+# Need to find way to do this with tidymodels
+
+# Ridge
+lm_ridge <- linear_reg(mixture = 0) %>% 
+  set_mode("regression") %>% 
+  set_engine("glmnet") %>% 
+  fit(price ~ ., data = housing_data)
+
+summary(lm_ridge)
+
+# Lasso
+lm_lasso <- linear_reg(mixture = 1) %>% 
+  set_mode("regression") %>% 
+  set_engine("glmnet") %>% 
+  fit(price ~ ., data = housing_data)
+
+summary(lm_lasso)
 ```
 
