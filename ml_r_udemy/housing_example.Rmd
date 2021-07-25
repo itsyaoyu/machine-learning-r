@@ -16,7 +16,8 @@ library(readxl)
 library(janitor)
 library(ggcorrplot)
 
-housing_data <- read_csv("Data Files/Linear Regression Dataset/House_Price.csv")
+# housing_data <- read_csv("Data Files/Linear Regression Dataset/House_Price.csv")
+housing_data <- read_csv("Data Files/Logistic Reg Dataset/House-Price.csv")
 ```
 
 ```{r cleaning outliers}
@@ -39,14 +40,8 @@ housing_data <- complete(mice(housing_data, printFlag = FALSE))
 ```
 
 ```{r variable transformation}
-# Looking at crime rate and combining dist
-housing_data %>% 
-  ggplot(aes(x = log(crime_rate + 1), y = price)) +
-  geom_point()
-
 housing_data <- housing_data %>% 
-  mutate(crime_rate = log(crime_rate + 1),
-         avg_dist = mean(dist1 + dist2 + dist3 + dist4)) %>% 
+  mutate(avg_dist = mean(dist1 + dist2 + dist3 + dist4)) %>% 
   select(-c(dist1, dist2, dist3, dist4))
 
 ```
@@ -79,6 +74,9 @@ summary(fit_2)
 ```
 
 ```{r train test split}
+housing_data <- housing_data %>% 
+  mutate(Sold = as_factor(Sold))
+
 # Creating a train test split using rsample
 housing_data_split <- initial_split(housing_data, .8)
 
@@ -163,5 +161,86 @@ lm_lasso <- linear_reg(mixture = 1) %>%
   fit(price ~ ., data = housing_data)
 
 summary(lm_lasso)
+```
+
+```{r logistic regression}
+glm_fit <- glm(Sold ~ price, family = binomial, data = housing_train)
+
+summary(glm_fit)
+
+glm_fit_2 <- glm(Sold ~ ., family = binomial, data = housing_train)
+
+summary(glm_fit_2)
+
+glm_pred <- predict(glm_fit, type = "response")
+```
+
+```{r Linear Discriminant Analysis}
+lda_fit <- MASS::lda(Sold ~ ., data = housing_train %>% select(-avg_dist))
+
+lda_pred <- predict(lda_fit, housing_train)
+```
+
+```{r knn classification}
+# Setting the seed for reproducibility
+set.seed(2001)
+
+# Creating 5 folds
+#housing_folds <- vfold_cv(housing_train, v = 5)
+
+# Creating the knn model
+knn_model <- nearest_neighbor(neighbors = 3) %>% 
+  set_engine("kknn") %>% 
+  set_mode("classification")
+
+# Creating a recipe for normalization
+knn_recipe <- recipe(Sold ~ ., data = housing_train) %>% 
+  step_normalize(all_numeric(), -all_outcomes())
+
+# Creating a workflow
+knn_workflow <- workflow() %>% 
+  add_model(knn_model) %>% 
+  add_recipe(knn_recipe)
+
+# Creating a grid for tuning
+#k_grid <- tibble(neighbors = c(10, 20, 30, 50, 75, 100, 125, 150))
+
+# Tuning
+#knn_tuning <- knn_workflow %>% 
+#  tune_grid(resamples = housing_folds, grid = k_grid)
+
+# Finding the best tune
+#knn_tuning %>% 
+#  show_best('roc_auc')
+
+# Showing the best tune
+#best_k <- knn_tuning %>% 
+#  select_best(metric = 'roc_auc')
+
+#best_k
+
+# Selecting the best tune
+#final_knn_workflow <- knn_workflow %>% 
+#  finalize_workflow(best_k)
+
+# Fitting on test data
+last_fit_knn <- knn_workflow %>% 
+  last_fit(split = housing_data_split)
+
+# Evaluating the results
+last_fit_knn %>% 
+  collect_metrics()
+
+# Getting the predictions
+knn_predictions <- last_fit_knn %>% 
+  collect_predictions()
+
+# ROC plot
+knn_predictions %>% 
+  roc_curve(truth = Sold, estimate = .pred_yes) %>% 
+  autoplot()
+
+# Confusion matrix
+conf_mat(knn_predictions, truth = Sold, estimate = .pred_class)
 ```
 

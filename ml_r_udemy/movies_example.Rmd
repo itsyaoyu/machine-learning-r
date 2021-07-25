@@ -1,0 +1,81 @@
+---
+title: "Movies Example"
+author: "Yao Yu"
+date: "7/25/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+
+library(tidyverse)
+library(tidymodels)
+library(janitor)
+library(mice)
+library(rpart.plot)
+```
+
+```{r data processing}
+# Reading in the data
+movies <- read_csv("Data Files/Decision Tree Dataset/Movie_regression.csv") %>% 
+  clean_names()
+
+# Imputing missing values
+movies_clean <- complete(mice(movies, printFlag = FALSE))
+
+# Setting the seed
+set.seed(2001)
+
+# Splitting the data
+movies_data_split <- initial_split(movies_clean, prop = 0.8)
+movies_train <- training(movies_data_split)
+movies_cv <- vfold_cv(movies_train)
+movies_test <- testing(movies_data_split)
+```
+
+```{r}
+# Decision Tree model
+dtree <- decision_tree() %>% 
+  set_mode("regression") %>% 
+  set_engine("rpart", control = rpart.control(cp = best_cp))
+
+# Decision Tree Recipe
+dtree_recipe <- recipe(formula = collection ~ ., data = movies_train)
+
+# Creating a workflow
+dtree_workflow <- workflow() %>% 
+  add_model(dtree) %>% 
+  add_recipe(dtree_recipe)
+
+# Fitting the model
+dtree_fit_resample <- fit_resamples(
+  dtree_workflow,
+  movies_cv,
+  metrics = metric_set(rmse, rsq),
+  control = control_resamples(
+    verbose = TRUE,
+    save_pred = TRUE,
+    extract = function(x) extract_model(x)
+  )
+)
+
+# Showing the results
+dtree_fit_resample %>% 
+  collect_metrics()
+
+# Pulling out the tree for plotting
+dtree_fit <- dtree_workflow %>% 
+  fit(movies_train) %>% 
+  pull_workflow_fit()
+
+# Plotting the result
+rpart.plot(dtree_fit$fit, box.palette="RdBu", shadow.col="gray", nn = TRUE, digits = -3)
+
+plotcp(dtree_fit$fit)
+
+best_cp <- as_tibble(dtree_fit$fit$cptable) %>% 
+  arrange(xerror) %>% 
+  head(1) %>% 
+  pull(CP)
+```
+
